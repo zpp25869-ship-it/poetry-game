@@ -522,6 +522,10 @@ function getWorkFullText(work, withPinyin = false) {
   return work.contentRaw.map((line) => (withPinyin ? line : stripPinyin(line))).join('<br>');
 }
 
+function isSpecificWork(filter) {
+  return filter !== 'all' && filter !== 'poem' && filter !== 'prose';
+}
+
 // ==================== 状态 ====================
 const STORAGE_KEYS = {
   score: 'poetryScore',
@@ -536,6 +540,8 @@ const state = {
   quizIndex: 0,
   quizCurrent: null,
   quizFilter: localStorage.getItem(STORAGE_KEYS.filter) || 'all',
+  quizPhase: 'play',   // 'preview' | 'play' | 'done'（仅单篇模式）
+  quizDoneCount: 0,     // 单篇模式已答题数
   quizShowPinyin: false,
   orderWork: works[0],
   orderCurrent: [],
@@ -632,8 +638,83 @@ function saveState() {
   renderScoreboard();
 }
 
+function renderQuizPreview() {
+  const workId = state.quizFilter;
+  const work = getWorkById(workId);
+  if (!work) return;
+  const hasPinyin = work.contentRaw.some(l => /[a-zA-Zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜ]/.test(l));
+  const text = work.contentRaw.map(l => stripPinyin(l)).join('<br>');
+  const pinyinText = work.contentRaw.map(l => l).join('<br>');
+  $('quizCard').innerHTML = `
+    <div class="meta">
+      <span class="title">《${work.title}》</span>
+      <span class="author">${work.author} · ${work.dynasty}</span>
+    </div>
+    <p style="margin:14px 0 6px; font-size:14px; color:var(--muted);">
+      预复习以下内容，准备好后点击「开始闯关」
+    </p>
+    <div class="prompt" style="font-size:17px; line-height:2; text-align:left;">
+      ${text}
+    </div>
+    ${hasPinyin ? `<p style="margin:10px 0 0; font-size:14px; color:var(--muted);">⚠ 点击「显示拼音」可查看带拼音原文</p>` : ''}
+  `;
+  $('quizFeedback').className = 'feedback';
+  $('quizFeedback').innerHTML = '';
+  $('nextQuizBtn').textContent = '开始闯关 →';
+  $('pinyinQuizBtn').textContent = '显示拼音';
+
+  // 拼音切换
+  const savedPinyinHandler = $('pinyinQuizBtn')._clickHandler;
+  if (savedPinyinHandler) $('pinyinQuizBtn').removeEventListener('click', savedPinyinHandler);
+  const handler = () => {
+    const showing = $('pinyinQuizBtn').textContent === '隐藏拼音';
+    $('pinyinQuizBtn').textContent = showing ? '显示拼音' : '隐藏拼音';
+    $('quizCard').querySelector('.prompt').innerHTML = showing ? text : pinyinText;
+  };
+  $('pinyinQuizBtn')._clickHandler = handler;
+  $('pinyinQuizBtn').addEventListener('click', handler);
+}
+
+function renderQuizDone() {
+  const workId = state.quizFilter;
+  const work = getWorkById(workId);
+  if (!work) return;
+  const text = work.contentRaw.map(l => stripPinyin(l)).join('<br>');
+  $('quizCard').innerHTML = `
+    <div class="meta">
+      <span class="title">《${work.title}》</span>
+      <span class="author">${work.author} · ${work.dynasty}</span>
+    </div>
+    <p style="margin:14px 0 6px; font-size:16px; color:var(--indigo); font-weight:700;">
+      ✨ 闯关完成！全文回顾：
+    </p>
+    <div class="prompt" style="font-size:17px; line-height:2; text-align:left;">
+      ${text}
+    </div>
+  `;
+  $('quizFeedback').className = 'feedback';
+  $('quizFeedback').innerHTML = '';
+  $('nextQuizBtn').textContent = '重新复习';
+  $('pinyinQuizBtn').textContent = '显示拼音';
+  // 恢复拼音按钮的默认行为
+}
+
 function nextQuiz() {
+  if (state.quizPhase === 'preview') {
+    // 开始闯关
+    state.quizPhase = 'play';
+    state.quizPool = buildQuizPool();
+    state.quizIndex = 0;
+    state.quizDoneCount = 0;
+    $('nextQuizBtn').textContent = '换一题';
+  }
   if (!state.quizPool.length || state.quizIndex >= state.quizPool.length) {
+    if (isSpecificWork(state.quizFilter) && state.quizPhase === 'play') {
+      state.quizPhase = 'done';
+      $('nextQuizBtn').textContent = '重新复习';
+      renderQuizDone();
+      return;
+    }
     state.quizPool = buildQuizPool();
     state.quizIndex = 0;
   }
@@ -701,6 +782,25 @@ function onQuizAnswer(e) {
     showFeedback('quizFeedback', false, `正确答案是：${q.answer}`);
   }
   saveState();
+
+  // 单篇模式：答题后自动推进
+  if (isSpecificWork(state.quizFilter) && state.quizPhase === 'play') {
+    state.quizDoneCount += 1;
+    if (state.quizDoneCount >= state.quizPool.length) {
+      // 最后一题已答 → 显示回顾
+      setTimeout(() => {
+        state.quizPhase = 'done';
+        $('nextQuizBtn').textContent = '重新复习';
+        renderQuizDone();
+      }, 600);
+    } else {
+      // 自动进入下一题
+      setTimeout(() => {
+        state.quizIndex += 1;
+        nextQuiz();
+      }, 800);
+    }
+  }
 }
 
 // ==================== 渲染：诗句排序（拖拽） ====================
@@ -724,7 +824,7 @@ function renderOrder() {
       <span class="author">${work.author} · ${work.dynasty}</span>
     </div>
     <p style="margin:0 0 12px; font-size:14px; color:var(--muted);">
-      拖拽 ⠿ 调整顺序
+      拖拽手柄调整 · 也可以先<strong>点选</strong>一行再点另一行<strong>交换</strong>
     </p>
     <div class="order-rows">
       ${state.orderCurrent.map((line, i) => `
@@ -742,10 +842,13 @@ function renderOrder() {
 }
 
 // ========== 拖拽排序引擎 ==========
+var _selectedIdx = -1;
+
 function _reorder(from, to) {
   if (from === to) return;
   const item = state.orderCurrent.splice(from, 1)[0];
   state.orderCurrent.splice(to, 0, item);
+  _selectedIdx = -1;
   renderOrder();
 }
 
@@ -762,6 +865,7 @@ function _initOrderDrag() {
       dragEl = row;
       dragIdx = parseInt(row.dataset.index);
       row.classList.add('dragging');
+      _selectedIdx = -1;
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', String(dragIdx));
     });
@@ -805,8 +909,31 @@ function _initOrderDrag() {
     dragIdx = -1;
   });
 
+  // ----- 点选交换：先点一行（高亮），再点另一行 → 交换位置 -----
+  container.addEventListener('click', (e) => {
+    const row = e.target.closest('.order-row');
+    if (!row) return;
+    // 拖拽手柄上不触发交换（避免误触）
+    if (e.target.closest('.drag-handle')) return;
+    const idx = parseInt(row.dataset.index);
+    if (_selectedIdx === -1) {
+      _selectedIdx = idx;
+      container.querySelectorAll('.order-row').forEach(r => r.classList.remove('selected'));
+      row.classList.add('selected');
+    } else if (_selectedIdx === idx) {
+      _selectedIdx = -1;
+      row.classList.remove('selected');
+    } else {
+      container.querySelectorAll('.order-row').forEach(r => r.classList.remove('selected'));
+      const item = state.orderCurrent.splice(_selectedIdx, 1)[0];
+      state.orderCurrent.splice(idx, 0, item);
+      _selectedIdx = -1;
+      renderOrder();
+    }
+  });
+
   // ----- 触摸拖拽（iOS / 全平台兼容） -----
-  let ts = null; // { row, fromIndex, lastY }
+  let ts = null;
 
   container.addEventListener('touchstart', (e) => {
     const row = e.target.closest('.order-row');
@@ -825,7 +952,6 @@ function _initOrderDrag() {
     const touch = e.touches[0];
     ts.lastY = touch.clientY;
 
-    // 用 elementFromPoint 找手指位置对应的行
     ts.row.style.display = 'none';
     const el = document.elementFromPoint(touch.clientX, touch.clientY);
     ts.row.style.display = '';
@@ -839,7 +965,6 @@ function _initOrderDrag() {
         state.orderCurrent.splice(toIdx, 0, item);
         ts.fromIndex = toIdx;
         renderOrder();
-        // 重绘后重新获取 row 引用
         const rows = document.querySelectorAll('.order-row');
         if (rows[toIdx]) ts.row = rows[toIdx];
       }
@@ -1061,24 +1186,59 @@ function bindEvents() {
   $('quizFilter').addEventListener('change', (e) => {
     state.quizFilter = e.target.value;
     state.quizIndex = 0;
-    state.quizPool = buildQuizPool();
-    saveState();
-    nextQuiz();
+    state.quizDoneCount = 0;
+    if (isSpecificWork(state.quizFilter)) {
+      state.quizPhase = 'preview';
+      state.quizPool = [];
+      saveState();
+      renderQuizPreview();
+    } else {
+      state.quizPhase = 'play';
+      state.quizPool = buildQuizPool();
+      saveState();
+      nextQuiz();
+    }
   });
 
   $('nextQuizBtn').addEventListener('click', () => {
-    state.quizIndex += 1;
-    nextQuiz();
+    if (state.quizPhase === 'preview') {
+      // 开始闯关
+      state.quizPhase = 'play';
+      state.quizPool = buildQuizPool();
+      state.quizIndex = 0;
+      state.quizDoneCount = 0;
+      nextQuiz();
+    } else if (state.quizPhase === 'done') {
+      // 重新开始
+      state.quizPhase = 'preview';
+      renderQuizPreview();
+    } else {
+      state.quizIndex += 1;
+      nextQuiz();
+    }
   });
 
   $('resetQuizBtn').addEventListener('click', () => {
     if (!confirm('确定重置闯关进度吗？得分会保留。')) return;
     state.quizIndex = 0;
-    state.quizPool = buildQuizPool();
-    nextQuiz();
+    state.quizDoneCount = 0;
+    if (isSpecificWork(state.quizFilter)) {
+      state.quizPhase = 'preview';
+      $('quizFeedback').className = 'feedback';
+      $('quizFeedback').innerHTML = '';
+      renderQuizPreview();
+    } else {
+      state.quizPhase = 'play';
+      state.quizPool = buildQuizPool();
+      nextQuiz();
+    }
   });
 
   $('pinyinQuizBtn').addEventListener('click', () => {
+    if (state.quizPhase === 'preview') {
+      // 预览模式的拼音切换走预览的 handler
+      return;
+    }
     state.quizShowPinyin = !state.quizShowPinyin;
     renderQuiz();
   });
@@ -1132,8 +1292,15 @@ function init() {
   initOrderSelect();
   bindEvents();
   renderScoreboard();
-  state.quizPool = buildQuizPool();
-  nextQuiz();
+  if (isSpecificWork(state.quizFilter)) {
+    state.quizPhase = 'preview';
+    state.quizPool = [];
+    renderQuizPreview();
+  } else {
+    state.quizPhase = 'play';
+    state.quizPool = buildQuizPool();
+    nextQuiz();
+  }
   nextMeta();
   newOrder();
 }

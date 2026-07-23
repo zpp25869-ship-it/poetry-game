@@ -328,7 +328,7 @@ h1 {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 10px;
+  padding: 14px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   margin-bottom: 10px;
@@ -344,18 +344,25 @@ h1 {
   cursor: grabbing;
 }
 
+.order-row.selected {
+  border-color: var(--indigo);
+  background: var(--indigo-light);
+  box-shadow: 0 0 0 2px var(--indigo);
+}
+
 .order-row .drag-handle {
-  font-size: 20px;
+  font-size: 24px;
   color: var(--muted);
   flex-shrink: 0;
-  padding: 4px 2px;
+  padding: 8px 6px;
   line-height: 1;
   letter-spacing: 0;
+  cursor: grab;
 }
 
 .order-row .idx {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
   border-radius: 50%;
